@@ -40,6 +40,18 @@ export interface Blocks {
   block: Block;
 }
 
+export interface HeroBanner {
+  uid?: string;
+  _content_type_uid?: string;
+  $?: any;
+  banner_title?: string;
+  banner_description?: string;
+  background_color?: string;
+  text_color?: string;
+  banner_image?: File | null;
+  banner_imageConnection?: any;
+}
+
 export interface Page {
   uid: string;
   _content_type_uid: string;

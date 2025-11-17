@@ -1,6 +1,6 @@
 import contentstack from "@contentstack/delivery-sdk"
 import ContentstackLivePreview, { IStackSdk } from "@contentstack/live-preview-utils";
-import { GraphQLHeaders, Page } from "./types";
+import { GraphQLHeaders, HeroBanner, Page } from "./types";
 import { GraphQLClient } from "graphql-request";
 import { graphql } from "../gql"
 import { getContentstackEndpoints, getRegionForString } from "@timbenniks/contentstack-endpoints";
@@ -53,34 +53,38 @@ export function initLivePreview() {
   });
 }
 
-export async function getPage(url: string) {
+function createGraphQLClient() {
   const apiKey = process.env.NEXT_PUBLIC_CONTENTSTACK_API_KEY;
   const environment = process.env.NEXT_PUBLIC_CONTENTSTACK_ENVIRONMENT;
   const accessToken = process.env.NEXT_PUBLIC_CONTENTSTACK_DELIVERY_TOKEN as string;
   const preview = process.env.NEXT_PUBLIC_CONTENTSTACK_PREVIEW;
   const previewToken = process.env.NEXT_PUBLIC_CONTENTSTACK_PREVIEW_TOKEN as string;
-  const hash = ContentstackLivePreview.hash;
+  const hash =
+    typeof window === "undefined"
+      ? undefined
+      : ContentstackLivePreview.hash;
 
-  // Use environment variables if they exist, otherwise fall back to endpoints
-  // for internal testing purposes at Contentstack we look for a custom host in the env vars, you do not have to do this.
   const graphqlUrl = process.env.NEXT_PUBLIC_CONTENTSTACK_CONTENT_DELIVERY || endpoints.graphql;
   const graphqlPreviewUrl = process.env.NEXT_PUBLIC_CONTENTSTACK_PREVIEW_HOST || endpoints.graphqlPreview;
-
-  const baseURL = preview === 'true' && hash ? graphqlPreviewUrl : graphqlUrl
+  const baseURL = preview === 'true' && hash ? graphqlPreviewUrl : graphqlUrl;
 
   const headers: GraphQLHeaders = {
-    access_token: accessToken
-  }
+    access_token: accessToken,
+  };
 
   if (hash) {
     headers.live_preview = hash;
-    headers.preview_token = previewToken
+    headers.preview_token = previewToken;
   }
 
   const gqEndpoint = `https://${baseURL}/stacks/${apiKey}?environment=${environment}`;
-  const graphQLClient = new GraphQLClient(gqEndpoint, {
-    headers
-  })
+  return new GraphQLClient(gqEndpoint, {
+    headers,
+  });
+}
+
+export async function getPage(url: string) {
+  const graphQLClient = createGraphQLClient();
 
   const query = graphql(`
     query Page($url: String!) {
@@ -152,9 +156,104 @@ export async function getPage(url: string) {
 
   const entry = fixedEntryForEditableTags;
 
-  if (process.env.NEXT_PUBLIC_CONTENTSTACK_PREVIEW === 'true') {
-    entry && contentstack.Utils.addEditableTags(entry as Page, 'page', true);
+  if (process.env.NEXT_PUBLIC_CONTENTSTACK_PREVIEW === 'true' && entry) {
+    contentstack.Utils.addEditableTags(entry as Page, 'page', true);
   }
 
   return entry as Page
+}
+
+type HeroBannerQueryResponse = {
+  all_hero_banner?: {
+    items?: Array<{
+      system?: {
+        uid?: string | null;
+        content_type_uid?: string | null;
+      } | null;
+      banner_title?: string | null;
+      banner_description?: string | null;
+      background_color?: string | null;
+      text_color?: string | null;
+      banner_imageConnection?: {
+        edges?: Array<{
+          node?: {
+            url?: string | null;
+            title?: string | null;
+            $?: any;
+          } | null;
+        } | null> | null;
+      } | null;
+      $?: any;
+    } | null> | null;
+  } | null;
+};
+
+export async function getHeroBanner() {
+  const graphQLClient = createGraphQLClient();
+
+  try {
+    const typeCheck = await graphQLClient.request<{
+      heroBannerType?: { name?: string | null } | null;
+    }>(
+      `
+        query HeroBannerTypeCheck {
+          heroBannerType: __type(name: "hero_banner") {
+            name
+          }
+        }
+      `
+    );
+
+    if (!typeCheck.heroBannerType?.name) {
+      return null;
+    }
+
+    const query = `
+      query HeroBanner {
+        all_hero_banner(limit: 1) {
+          items {
+            system {
+              uid
+              content_type_uid
+            }
+            banner_title
+            banner_description
+            background_color
+            text_color
+            banner_imageConnection {
+              edges {
+                node {
+                  url
+                  title
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    const res = await graphQLClient.request<HeroBannerQueryResponse>(query);
+    const hero = res?.all_hero_banner?.items?.[0];
+
+    if (!hero) {
+      return null;
+    }
+
+    const entry = {
+      ...hero,
+      banner_image: hero?.banner_imageConnection?.edges?.[0]?.node || null,
+      uid: hero?.system?.uid,
+      _content_type_uid: hero?.system?.content_type_uid,
+    };
+
+    if (process.env.NEXT_PUBLIC_CONTENTSTACK_PREVIEW === 'true' && entry) {
+      contentstack.Utils.addEditableTags(entry as any, 'hero_banner', true);
+    }
+
+    return entry as HeroBanner;
+  } catch (error) {
+    console.error("Failed to fetch hero banner", error);
+    return null;
+  }
 }
